@@ -1,0 +1,39 @@
+
+body {
+  margin: auto;
+}
+
+.ladder h2 {
+  font-size: 140%;
+  margin-top: 25px;
+  border-bottom: 2px solid #dedede;
+}
+
+.ladder_table h3 {
+  margin: 10px 0;
+  font-size: 120%;
+}
+
+table {
+  font-size: 140%;
+  margin-bottom: 50px;
+}
+.player_1,
+.player_2 {
+  padding: 5px;
+}
+
+.ladder_table {
+  width: 100% !important;
+  margin-top: 25px;
+  position: relative;
+  float: left;
+}
+
+.ladder_table th {
+  padding: 5px;
+}
+.ladder_table th {
+  background-color: #000;
+  color: #fff;
+}

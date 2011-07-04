@@ -6,7 +6,9 @@ import worldtalker
 import worldmap
 import math
 import settings
+import tuct
 from unit import Unit
+import maps.default as map_settings
 
 import copy
 import itertools
@@ -15,6 +17,9 @@ import random
 import traceback
 import threading
 from collections import defaultdict
+
+
+from lib.geometry import linesIntersect
 
 try:
   import json
@@ -38,6 +43,15 @@ MOVING=0
 # shooting only lasts one turn.
 SHOOTING=1
 CAPTURING=2
+
+
+DEFAULT_UNIT_STATS = {
+                      "armor"   : 1,
+                      "attack"  : 1,
+                      "sight"   : 1,
+                      "energy"  : 1,
+                      "speed"   : 1
+                     }
 
 
 class Event:
@@ -115,9 +129,37 @@ class Stats:
         self.energy = energy
         self.sight = sight
         self.speed = speed
+
+        if team:
+          self.team = team
+
+        if ai_id:
+          self.ai_id = ai_id
+
         self.unit = None
-        self.team = team
-        self.ai_id = ai_id
+
+
+    @classmethod
+    def aiVisibleSettings(self, map_module):
+      stats = Stats(**DEFAULT_UNIT_STATS)
+
+      bulletRange = map_settings.MAP_SIZE/map_settings.BULLET_RANGE_MODIFIER
+      bulletSpeed = map_settings.MAP_SIZE/map_settings.BULLET_SPEED_MODIFIER
+
+      stats.armor  = stats.armor  * map_module.ARMOR_MODIFIER
+      stats.energy = stats.energy * map_module.ENERGY_MODIFIER
+      stats.attack = stats.attack * map_module.ATTACK_MODIFIER * math.log(map_module.MAP_SIZE)
+
+      stats.sight  = int((stats.sight * bulletRange) * map_module.SIGHT_MODIFIER)
+
+      stats.speed  = int(stats.speed * (map_module.SPEED_MODIFIER * math.log(map_module.MAP_SIZE)))
+
+
+      return stats
+
+    @classmethod
+    def adjustStatsForMap(self, map_module):
+      return Stats.aiVisibleSettings(map_module)
 
 # The world is responsible for maintaining the world
 # as well as running each turn, checking for end conditions
@@ -125,18 +167,23 @@ class Stats:
 class World:
     def __init__(self, mapsize=None):
         if not mapsize:
-          mapsize = settings.MAP_SIZE
+          mapsize = map_settings.MAP_SIZE
+
+        self.mapSize = mapsize
 
         self.wt = worldtalker.WorldTalker(self)
         self.AI = []
+        # Map a unit or AI to a team
         self.teams = {}
+        # Maps a team to its AI
         self.team_map = {}
         self.ai_cycler = itertools.cycle(self.AI)
+        self.ai_profiles = {}
         self.units = {} # instead of a list, it will point to the unit's attributes.
         self.all_units = {} # instead of a list, it will point to the unit's attributes.
         self.under_attack = set()
-        self.mapSize = mapsize
-        self.map = worldmap.Map(self.mapSize)
+        map_settings.MAP_SIZE = mapsize
+        self.map = worldmap.Map(map_settings.MAP_SIZE)
         self.currentTurn = 0
         self.events = set()
         self.unitevents = defaultdict(set)
@@ -152,8 +199,31 @@ class World:
         self.execution_times = defaultdict(lambda: defaultdict(int))
 
         self.buildings = {}
-        log.info('Adding %s buildings to map', settings.ADDITIONAL_BUILDINGS)
-        for i in xrange(settings.ADDITIONAL_BUILDINGS):
+        self.spawn_points = {}
+        # These contain the amount of time left for a building to spawn a unit
+        self.spawn_counters = defaultdict(int)
+
+        if map_settings.SPAWN_POINTS:
+          for coord in map_settings.SPAWN_POINTS:
+            if not isValidSquare(coord, self.mapSize):
+              continue
+
+            b = mapobject.Building(self.wt)
+            self.buildings[b] = None
+            self.spawn_points[b] = None
+            self.map.placeObject(b, coord)
+
+        if map_settings.BUILDINGS:
+          for coord in map_settings.BUILDINGS:
+            if not isValidSquare(coord, self.mapSize):
+              continue
+
+            b = mapobject.Building(self.wt)
+            self.buildings[b] = None
+            self.map.placeObject(b, coord)
+
+        log.info('Adding %s buildings to map', map_settings.ADDITIONAL_BUILDINGS)
+        for i in xrange(map_settings.ADDITIONAL_BUILDINGS):
           self.buildings[self.placeRandomBuilding()] = None
 
 
@@ -169,15 +239,17 @@ class World:
         self.dead_units = {}
         self.oldbullets = []
         self.bullet_endings = defaultdict(bool)
-        self.bulletRange = self.mapSize/settings.BULLET_RANGE_MODIFIER
-        self.bulletSpeed = self.mapSize/settings.BULLET_SPEED_MODIFIER
-
-
+        self.bulletRange = map_settings.MAP_SIZE/map_settings.BULLET_RANGE_MODIFIER
+        self.bulletSpeed = map_settings.MAP_SIZE/map_settings.BULLET_SPEED_MODIFIER
+        self.__initStats()
 
         self.visibleunits = defaultdict(set)
         self.visiblebuildings = defaultdict(set)
         self.__calcVisibility()
 
+
+    def __initStats(self):
+      self.unit_stats = Stats.adjustStatsForMap(map_settings)
 
 
     def placeRandomBuilding(self):
@@ -188,27 +260,27 @@ class World:
       best_min_guess = 0
       best_base = None
       while True:
-        min_guess = self.mapSize**2
+        min_guess = map_settings.MAP_SIZE**2
         attempts += 1
         rand_square = self.map.getRandomSquare()
         within_range_of_other_building = False
         best_square = None
 
-        dist_from_edge = math.sqrt(self.mapSize) / 2
+        dist_from_edge = math.sqrt(map_settings.MAP_SIZE) / 2
         if rand_square[0] < dist_from_edge:
           continue
         if rand_square[1] < dist_from_edge:
           continue
-        if self.mapSize - rand_square[0] < dist_from_edge:
+        if map_settings.MAP_SIZE - rand_square[0] < dist_from_edge:
           continue
-        if self.mapSize - rand_square[1] < dist_from_edge:
+        if map_settings.MAP_SIZE - rand_square[1] < dist_from_edge:
           continue
 
         for building in self.buildings:
           pos = self.map.getPosition(building)
           if building == b or not pos:
             continue
-          spawn_distance = settings.BUILDING_SPAWN_DISTANCE * math.log(self.mapSize)
+          spawn_distance = map_settings.BUILDING_SPAWN_DISTANCE * math.log(map_settings.MAP_SIZE)
           dist = calcDistance(pos, rand_square)
           if dist < spawn_distance:
             within_range_of_other_building = True
@@ -225,7 +297,7 @@ class World:
           break
 
         if attempts >= 5 and best_square:
-          log.info("Couldn't place building far enough away after five tries, taking last guess")
+          log.info("Couldn't place building far enough away after five tries, taking best guess")
           rand_square = best_square
           break
 
@@ -236,19 +308,37 @@ class World:
     # This accepts a subclass ai.AI, instantiates the class
     # and places a building on the map for that AI.
     def addAI(self, ai_class):
+        if map_settings.SPAWN_POINTS and len(self.AI) >= len(map_settings.SPAWN_POINTS):
+          log.warn("Not adding %s to map, all spawn points taken", ai_class)
+          return
+
         ai_player = ai_class(self.wt)
         self.AI.append(ai_player)
         self.teams[ai_player.ai_id] = ai_player.team
         self.team_map[ai_player.team] = ai_player
         ai_player.init()
-        b = self.placeRandomBuilding()
-        self.buildings[b] = self.ai_cycler.next()
 
-        log.info("Adding %s new buildings for %s AI to map", settings.ADDITIONAL_BUILDINGS_PER_AI, ai_player)
-        for n in xrange(settings.ADDITIONAL_BUILDINGS_PER_AI):
+        if map_settings.SPAWN_POINTS:
+
+          while True:
+            key = random.choice(self.spawn_points.keys())
+            if not self.spawn_points[key]:
+              self.buildings[key] = self.ai_cycler.next()
+              self.spawn_points[key] = self.buildings[key]
+              break
+
+        else:
+          b = self.placeRandomBuilding()
+          self.buildings[b] = self.ai_cycler.next()
+
+        log.info("Adding %s new buildings for %s AI to map", map_settings.ADDITIONAL_BUILDINGS_PER_AI, ai_player)
+        for n in xrange(map_settings.ADDITIONAL_BUILDINGS_PER_AI):
           b = self.placeRandomBuilding()
           self.buildings[b] = None
 
+        if settings.PROFILE_AI:
+          import cProfile
+          self.ai_profiles[ai_player] = cProfile.Profile()
 
         return ai_player
 
@@ -289,14 +379,18 @@ class World:
 
 
     def spinAI(self):
+      building_owners = set(self.buildings.values())
       for ai in self.AI:
-        if not self.ai_units[ai.ai_id]:
+        if not self.ai_units[ai.ai_id] and not ai in building_owners:
           continue
 
         start_time = time.time()
-        if settings.SINGLE_THREAD:
+        if settings.SINGLE_THREAD or settings.PROFILE_AI:
           try:
-            ai.turn()
+            if settings.PROFILE_AI:
+              self.ai_profiles[ai].runctx("ai.turn()", { "ai" : ai }, {})
+            else:
+              ai.turn()
           except Exception, e:
               traceback.print_exc()
               if not settings.IGNORE_EXCEPTIONS:
@@ -390,6 +484,9 @@ class World:
                       self.teams[owner.ai_id],
                       building.building_id)
           else:
+            # Reset the unit spawn timer
+            self.spawn_counters[building] = map_settings.UNIT_SPAWN_MOD
+
             if old_owner:
               log.info("BUILDING: %s lost %s to %s",
                         self.teams[old_owner.ai_id],
@@ -442,8 +539,9 @@ class World:
                     if attacker:
                         unit.killer.add(attacker)
 
-    def __spawnUnit(self, statsdict, owner, square):
-        stats = Stats(**statsdict)
+
+    def __spawnUnit(self, owner, square):
+        stats = copy.copy(self.unit_stats)
         stats.ai = owner
         stats.ai_id = owner.ai_id
         stats.team = owner.team
@@ -452,19 +550,33 @@ class World:
         return unit
 
     def __spawnUnits(self):
-        if self.currentTurn % settings.UNIT_SPAWN_MOD == 0:
-          log.info("Spawning Units")
-          for b in self.buildings:
+        spawned_units = False
+        for b in self.buildings:
+
+          if self.spawn_counters[b] <= 0:
+            spawned_units = True
+            self.spawn_counters[b] = map_settings.UNIT_SPAWN_MOD
+
+            log.info("Spawning Units for building %s" % b.building_id)
             owner = self.buildings[b]
             square = self.map.getPosition(b)
             if owner and square:
-              statsdict = dict(b.getStats().iteritems())
-              self.__spawnUnit(statsdict, owner, square)
+              self.__spawnUnit(owner, square)
 
               log.info("SPAWN: %s gained a unit", (self.teams[owner.ai_id]))
+
+
+
+
+          self.spawn_counters[b] -= 1
+
+        if spawned_units:
           log.info("SCORES:")
           scores = self.calcScores()
           for t in scores:
+            if not t in self.team_map:
+              continue
+
             log.info("%s\t%s", t, self.team_map[t].__class__.__name__)
             for k in scores[t]:
               log.info("  %s:\t%s", k, scores[t][k])
@@ -532,18 +644,22 @@ class World:
         victims = []
         attackers = []
         for victim in self.unitpaths:
-            for (x, y) in self.unitpaths[victim]:
-                for attacker in self.bulletpaths:
-                    # No direct fire at self.
-                    if attacker == victim:
-                      continue
+            up = self.unitpaths[victim]
+            for attacker in self.bulletpaths:
+                # No direct fire at self.
+                if attacker == victim:
+                    continue
 
-                    for path in self.bulletpaths[attacker]:
-                        for (m, n) in path:
-                            if (x == m and y == n):
-                                victims.append(victim)
-                                attackers.append(attacker)
-                                break
+                if not up:
+                  continue
+
+                for bp in self.bulletpaths[attacker]:
+                    if (up[0] == up[-1] and up[0] in bp) or \
+                      linesIntersect((up[0], up[-1]), (bp[0], bp[-1])):
+
+                      victims.append(victim)
+                      attackers.append(attacker)
+                      break
 
         log.debug("Attackers: %s", attackers)
         log.debug("Victims:   %s", victims)
@@ -577,14 +693,8 @@ class World:
     # This is not a validated creation, so it will always
     # create the unit
     def __createUnit(self, stats, square):
-
         # modify the stats and copy them for our world.
         stats = copy.copy(stats)
-        stats.armor  = stats.armor  * settings.ARMOR_MODIFIER
-        stats.energy = stats.energy * settings.ENERGY_MODIFIER
-        stats.attack = stats.attack * settings.ATTACK_MODIFIER * math.log(self.mapSize)
-        stats.sight  = int((stats.sight * self.bulletRange) * settings.SIGHT_MODIFIER)
-        stats.speed  = int(stats.speed * (settings.SPEED_MODIFIER * math.log(settings.MAP_SIZE)))
 
         unit = Unit(self.wt, stats)
         self.units[unit] = stats
@@ -768,7 +878,7 @@ class World:
     def createShootEvent(self, unit, square, range):
         log.debug("Creating ShootEvent: Unit %s to Square %s", unit, square)
         self.__clearQueue(unit)
-        if isValidSquare(square, self.mapSize):
+        if isValidSquare(square, map_settings.MAP_SIZE):
             position = self.map.getPosition(unit)
             e = ShootEvent(unit, square, range)
             self.__queueEvent(e)
@@ -782,7 +892,7 @@ class World:
         if position == square:
           return
 
-        if isValidSquare(square, self.mapSize):
+        if isValidSquare(square, map_settings.MAP_SIZE):
             e = MoveEvent(unit, square)
             # If we've already calculated the full path to destination, we
             # don't need to recalculate it. This is so that subsequent move
@@ -808,7 +918,7 @@ class World:
         #I'm trying to check if the unit is inside the building
         #we will also have to check if there are enemies inside
         #the building, but I'm not sure how
-            e = CaptureEvent(unit, building, settings.CAPTURE_LENGTH)
+            e = CaptureEvent(unit, building, map_settings.CAPTURE_LENGTH)
             self.__queueEvent(e)
         else:
             raise ai_exceptions.IllegalCaptureEvent("The unit is not in the building.")
@@ -943,7 +1053,7 @@ class World:
     def dumpWorldToDict(self):
       world_data = {
                   "AI" : [],
-                  "mapsize" : self.mapSize,
+                  "mapsize" : map_settings.MAP_SIZE,
                   "colors"  : {},
                   "names"   : {},
                   "units"   : {},
@@ -1054,6 +1164,31 @@ class World:
           turn_data["highlights"].append(highlight_data)
 
       return turn_data
+
+    def printAIProfiles(self):
+      import pstats
+      for ai in self.ai_profiles:
+        prof = self.ai_profiles[ai]
+        ai_profile_file = open("%s.prof" % (ai.__class__.__name__), "w")
+
+        # Need to strip game engine stats out
+        log.info("Saving AI profile information to %s.prof", ai.__class__.__name__)
+        ai_profile_file.write("*** PROFILING OUTPUT FOR %s\n" % (ai.__class__))
+        p = pstats.Stats(prof, stream=ai_profile_file)
+        p = p.strip_dirs()
+        ai_profile_file.write("PRINTING FUNCTIONS SORTED BY TIME\n")
+        p.sort_stats('time')
+        p.print_stats(10)
+        p.print_callers(10)
+
+        ai_profile_file.write("PRINTING FUNCTIONS SORTED BY # CALLS\n")
+        p.sort_stats('calls')
+        p.print_stats(10)
+        p.print_callers(10)
+
+        ai_profile_file.close()
+
+
 
 
 #Map1 = {unit:position, building:position}

@@ -34,13 +34,13 @@ If posting to app engine, pyyaml
     # Play without graphics and a web replay. Open output.html to view the game replay.
     # NOTE: This file is a massive JSON crusty file. If you want to copy it
     # somewhere, make sure to compress it (scp -C) or gzip it first.
-    python main.py ai/capture.ai ai/killncapture.py -c -o output.html
+    python main.py ai/captureai.py ai/killncapture.py -c -o output.html
 
     # Use NCURSES GUI (Game output gets saved to game.log and game.out)
-    python main.py ai/capture.ai ai/killncapture.py -cn
+    python main.py ai/captureai.py ai/killncapture.py -cn
 
     # Play on a specific map
-    python main.py ai/capture.ai ai/killncapture.py -m maps/micro.py
+    python main.py ai/captureai.py ai/killncapture.py -m maps/micro.py
 
     # Show AI debug highlighting for AIs.
     # Note: Each AI must have --hl before it to enable highlighting. See the
@@ -62,13 +62,13 @@ If posting to app engine, pyyaml
 
     # Using remote AI
     # The format of a remote AI is:
-    # github_user:path_to_dep1,path_to_dep2,path_to_ai_module
+    # github_user:path_to_ai_module
     # The AI is then downloaded from that github user's fork of dmanai and used
     # as a player
     #
     # The following loads goose.py (with okay.py as a required dependency)
     # and expand then search from github.com/okayzed/dmanai
-    python main.py okayzed:okay/okay.py,okay/goose.py okayzed:bob/expand-then-search.py
+    python main.py okayzed:okay/goose.py okayzed:bob/expand-then-search.py
 
 See Also:
 ---------

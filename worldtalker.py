@@ -8,7 +8,10 @@ from unit import Unit
 import world
 from collections import defaultdict
 import sys
+from sys import _getframe as getframe
 import math
+
+import maps.default as map_settings
 
 from worldmap import calcDistance
 
@@ -91,15 +94,17 @@ class WorldTalker:
         return units
 
     # Get functions
-
     def getBulletRange(self):
         return self.__world.bulletRange
+
+    def getBulletSpeed(self):
+        return self.__world.bulletSpeed
 
     def getCurrentTurn(self):
         return self.__world.getLifeTime()
 
     def getMapSize(self):
-        return self.__world.mapSize
+        return map_settings.MAP_SIZE
 
     def getPosition(self, unit):
         if unit.__class__ == mapobject.Building:
@@ -303,7 +308,7 @@ class WorldTalker:
             try:
                 i+=1
                 try:
-                    frame = sys._getframe(i)
+                    frame = getframe(i)
                 except ValueError:
                     i = 0
                     if errored_once:

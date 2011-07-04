@@ -27,6 +27,7 @@ ai_module = ai
 
 def main(ai_classes=[]):
   w = world.World()
+  ai_module.clear_ai_colors()
   global CliWorld, ncurses
 
   CliWorld = w
@@ -38,12 +39,8 @@ def main(ai_classes=[]):
 
   for ai_class in ai_classes:
     ai_player = w.addAI(ai_class)
-    ai_module.generate_ai_color(ai_player)
-
-  if settings.SAVE_IMAGES:
-    import cairo
-    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 200, 200)
-    cairo_context = cairo.Context(surface)
+    if ai_player:
+      ai_module.generate_ai_color(ai_player)
 
   w.world_turns = []
   turns_left = settings.END_GAME_TURNS
@@ -62,9 +59,6 @@ def main(ai_classes=[]):
       s = w.dumpScores()
 
       w.world_turns.append((t,s))
-
-      if settings.SAVE_IMAGES:
-        worldmap.draw_map(cairo_context, 200, 200, t)
 
       if settings.NCURSES:
         ncurses.update(t, s)
@@ -87,14 +81,24 @@ def end_game():
   if settings.NCURSES:
     ncurses.end()
 
-  jsplayer.save_world_turns(CliWorld.world_turns)
   # Save the world information to an output file.
   if settings.JS_REPLAY_FILE or settings.JS_REPLAY_FILENAME:
+    jsplayer.save_world_turns(CliWorld.world_turns)
     jsplayer.end_world(CliWorld.dumpWorldToDict())
 
+  try:
+    if settings.PROFILE_AI:
+      CliWorld.printAIProfiles()
+  except Exception, e:
+    log.warn("""
+There was a problem saving AI profile information. Profiling
+information can get corrupted if the game is interrupted.
+""")
+
 def appengine_main(ais, appengine_file_name=None, tournament_key=None):
-  from appengine import record_game_to_db
+  from appengine.appengine import record_game_to_db
   from google.appengine.api import files
+  ai_module.clear_ai_colors()
   start_time = time.time()
 
   if not appengine_file_name:

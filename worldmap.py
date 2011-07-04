@@ -48,7 +48,7 @@ def draw_map(cairo_context, width, height, world_data, turn_data):
       color = world_data["colors"][str(team)]
 
       x, y = unit["position"]
-      alpha_color = (color[0], color[1], color[2], .15)
+      alpha_color = (color[0], color[1], color[2], .35)
       cairo_context.set_source_rgba(*alpha_color)
       cairo_context.arc(deltax*x, deltay*y, (unit_data["stats"]["sight"])*deltax, 0, 360.0)
       cairo_context.fill()
@@ -139,10 +139,11 @@ def draw_map(cairo_context, width, height, world_data, turn_data):
         cairo_context.stroke()
 
 
-  if settings.SAVE_IMAGES:
-    surface.write_to_png("_output_%02i.png"%world_data["currentturn"])
-
 class Map:
+    @classmethod
+    def aiVisibleSettings(self, map_settings):
+      return { "size" : map_settings.MAP_SIZE }
+
     def __init__(self, N):
         self.size = N
         self.objectMap = {}

@@ -37,6 +37,9 @@ log = logging.getLogger("GUI")
 import pango
 AI_FONT = pango.FontDescription('Sans 10')
 
+# This is needed for running in safe mode
+from multiprocessing.forking import Popen as forking_Popen
+
 
 AI_STATS=[
   'moving',
@@ -58,6 +61,10 @@ AI_STAT_COLORS={
   }
 
 class MapGUI:
+    # The frame queue is created in the class definition,
+    # instead of in the __init__ so that the internal imports
+    # needed by multiprocessing can success in safe mode.
+    frame_queue = multiprocessing.Queue(settings.BUFFER_SIZE)
     def __init__(self):
         # Initialize Widgets
 
@@ -67,10 +74,11 @@ class MapGUI:
         self.ai_drawables = {}
         self.colors = {}
         self.guiTurn = 0
+        ai.clear_ai_colors()
 
         # Initialize our pixbuf queue
         self.stopped = False
-        self.frame_queue = multiprocessing.Queue(settings.BUFFER_SIZE)
+        self.frame_queue = MapGUI.frame_queue
         self.lock = RLock()
 
         self.processes = []
@@ -106,6 +114,10 @@ class MapGUI:
 
     def add_ai(self, ai_class):
         a = self.world.addAI(ai_class)
+
+        if not a:
+          return
+
         ai.generate_ai_color(a)
 
         vbox = gtk.VBox()
@@ -254,9 +266,14 @@ class MapGUI:
 
 
     def threaded_world_spinner(self):
-        t = multiprocessing.Process(target=self.world_spinner)
-        t.start()
-        self.processes.append(t)
+        self.processing_thread = multiprocessing.Process(target=self.world_spinner)
+
+        # i peeked inside process.py and it's necessary to do
+        # this to prevent an unecessary import of the forking
+        # module
+        self.processing_thread._Popen = forking_Popen
+        self.processing_thread.start()
+        self.processes.append(self.processing_thread)
 
     def world_spinner(self):
 
@@ -312,9 +329,6 @@ class MapGUI:
 
 m = None
 def main(ais=[]):
-    import sys
-    import os
-
     global m
     m = MapGUI()
     for ai in ais:
